@@ -1,2 +1,1 @@
-# PythonCFD
-CFD with Python; just for my hobby.
+CFD just for fun.
