@@ -30,6 +30,7 @@ void AerocasterCGNSMeshReader_Read(AerocasterCGNSMeshReader *reader, const char 
     read_zone(reader);
     read_coord(reader);
     read_sect(reader);
+    printf("read done\n");
 }
 
 void AerocasterCGNSMeshReader_Destroy(AerocasterCGNSMeshReader *reader) {
@@ -224,7 +225,7 @@ static void read_sect(AerocasterCGNSMeshReader *reader) {
                     cg_error_exit();
                 }
 
-        printf("section %s: type %s, #elements %d, %s\n",
+        printf("section \"%s\": type %s, #elements %d, %s\n",
                reader->sect_name[s], ElementTypeName[reader->elem_type[s]],
                reader->nelems[s],
                reader->is_internal[s] ? "internal" : "boundary");

@@ -1,9 +1,8 @@
 CC = gcc
 AR = ar r
 
-CFLAGS = -Wall -Wextra -O2 -g -rdynamic
-INCLUDE = -I../include
-LIBS = -lcgns -lhdf5
+CFLAGS = -Wall -Wextra -O2
+INCLUDE = -I../include -I/usr/include/glib-2.0
 
 SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c, ../build/%.o, $(SRCS))
@@ -18,7 +17,7 @@ $(TARGET): $(OBJS)
 	$(AR) $@ $(OBJS)
 
 $(OBJS): ../build/%.o: %.c
-	$(CC) -c $< -o $@ $(CFLAGS) $(INCLUDE) $(LIBS)
+	$(CC) -c $< -o $@ $(CFLAGS) $(INCLUDE)
 
 clean:
 	rm -rf ../build
