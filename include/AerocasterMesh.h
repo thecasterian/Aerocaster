@@ -17,7 +17,17 @@ typedef enum {
     AEROCASTER_HEXA,                    /* Hexahedron. */
 } AerocasterMeshElementType;
 
-extern const int AerocasterMeshElementTypeNPE[7];
+extern const int AerocasterMeshElementTypeNVerts[7];
+extern const int AerocasterMeshElementTypeNFaces[7];
+
+/* The value of idx_adj of an element if the adjacent element does not exist. */
+#define AEROCASTER_NO_ADJ -1
+/* The value of face_section of an element if the section is unspecified and the
+adjacent element does not exist. */
+#define AEROCASTER_UNSPEC_BNDRY -1
+/* The value of face_section of an element if the section is unspecified and the
+adjacent element exists. */
+#define AEROCASTER_UNSPEC_INTER -2
 
 typedef struct {
     AerocasterMeshElementType type;     /* Element type. */

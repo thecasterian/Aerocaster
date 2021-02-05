@@ -26,8 +26,10 @@ static void StoreToFaceTree(GTree *tree, int n, ...);
 
 static gint CompareFace(gconstpointer a, gconstpointer b,
                         gpointer user_data G_GNUC_UNUSED);
+static gboolean FindAdjElem(gpointer key G_GNUC_UNUSED, gpointer value,
+                            gpointer data);
 
-const int AerocasterMeshElementTypeNPE[7] = {
+const int AerocasterMeshElementTypeNVerts[7] = {
     [AEROCASTER_SEG] = 2,
     [AEROCASTER_TRI] = 3,
     [AEROCASTER_QUAD] = 4,
@@ -35,6 +37,16 @@ const int AerocasterMeshElementTypeNPE[7] = {
     [AEROCASTER_PYRA] = 5,
     [AEROCASTER_PRISM] = 6,
     [AEROCASTER_HEXA] = 8,
+};
+
+const int AerocasterMeshElementTypeNFaces[7] = {
+    [AEROCASTER_SEG] = 1,
+    [AEROCASTER_TRI] = 3,
+    [AEROCASTER_QUAD] = 4,
+    [AEROCASTER_TETRA] = 4,
+    [AEROCASTER_PYRA] = 5,
+    [AEROCASTER_PRISM] = 5,
+    [AEROCASTER_HEXA] = 6,
 };
 
 static const int ElemTypeDim[7] = {
@@ -71,6 +83,11 @@ void AerocasterMesh_ReadCGNSMeshReader(AerocasterMesh *mesh,
     mesh->elems = malloc(sizeof(*mesh->elems) * reader->nelems_internal);
     mesh->sect_name = malloc(sizeof(*mesh->sect_name) * reader->nsects);
 
+    /* Initialize some member variables. */
+    for (int i = 0; i < reader->nelems_internal; i++)
+        for (int j = 0; j < 6; j++)
+            mesh->elems[i].face_section[j] = AEROCASTER_UNSPEC_INTER;
+
     /* Read coordinates and section names. */
     for (int i = 0; i < reader->nverts; i++) {
         mesh->verts[i].x = reader->x[i];
@@ -94,11 +111,21 @@ void AerocasterMesh_ReadCGNSMeshReader(AerocasterMesh *mesh,
             ReadBoundary(mesh, reader, face_tree, s);
 
     g_tree_destroy(face_tree);
+
+    for (int i = 0; i < reader->nelems_internal; i++) {
+        for (int j = 0; j < AerocasterMeshElementTypeNFaces[mesh->elems[i].type]; j++) {
+            if (mesh->elems[i].face_section[j] == AEROCASTER_UNSPEC_INTER
+                && mesh->elems[i].idx_adj[j] == AEROCASTER_NO_ADJ)
+                mesh->elems[i].face_section[j] = AEROCASTER_UNSPEC_BNDRY;
+        }
+    }
 }
 
 void AerocasterMesh_Destroy(AerocasterMesh *mesh) {
     free(mesh->verts); free(mesh->elems);
     free(mesh->sect_name);
+
+    free(mesh);
 }
 
 static void ReadInternal(AerocasterMesh *mesh,
@@ -119,12 +146,15 @@ static void ReadInternal(AerocasterMesh *mesh,
 
             /* Read the type as AerocasterMeshElementType. */
             mesh->elems[mesh->nelems].type = CGNSToAerocasterType(start[0]);
-            npe = AerocasterMeshElementTypeNPE[mesh->elems[mesh->nelems].type];
+            npe = AerocasterMeshElementTypeNVerts[mesh->elems[mesh->nelems].type];
 
             /* Read the indices of vertices. Additional nodes in a quadratic,
                cubic, or quartic element are ignored. */
             for (int j = 0; j < npe; j++)
                 mesh->elems[mesh->nelems].idx_verts[j] = start[j+1];
+
+            /* Set its section. */
+            mesh->elems[mesh->nelems].section = s;
 
             mesh->nelems++;
         }
@@ -144,8 +174,11 @@ static void ReadInternal(AerocasterMesh *mesh,
             mesh->elems[mesh->nelems].type = CGNSToAerocasterType(reader->elem_type[s]);
 
             /* Read the indices of vertices. */
-            for (int j = 0; j < AerocasterMeshElementTypeNPE[mesh->elems[mesh->nelems].type]; j++)
+            for (int j = 0; j < npe; j++)
                 mesh->elems[mesh->nelems].idx_verts[j] = start[j];
+
+            /* Set its section. */
+            mesh->elems[mesh->nelems].section = s;
 
             mesh->nelems++;
         }
@@ -158,6 +191,7 @@ static GTree *GetAdjacency(AerocasterMesh *mesh) {
 
     face_tree = g_tree_new_full(CompareFace, NULL, g_free, g_free);
 
+    /* Build the face tree. */
     for (int i = 0; i < mesh->nelems; i++) {
         v = mesh->elems[i].idx_verts;
 
@@ -206,6 +240,8 @@ static GTree *GetAdjacency(AerocasterMesh *mesh) {
         }
     }
 
+    g_tree_foreach(face_tree, FindAdjElem, mesh);
+
     return face_tree;
 }
 
@@ -224,7 +260,7 @@ static void ReadBoundary(AerocasterMesh *mesh,
 
             /* Read the type as AerocasterMeshElementType. */
             type = CGNSToAerocasterType(start[0]);
-            key.n = AerocasterMeshElementTypeNPE[type];
+            key.n = AerocasterMeshElementTypeNVerts[type];
 
             /* The dimension of a boundary element must be 1-D if the mesh is
                2-D or 2-D if the mesh is 3-D. Otherwise, ignore it. */
@@ -237,18 +273,62 @@ static void ReadBoundary(AerocasterMesh *mesh,
                 key.idx[j] = start[j+1];
 
             /* Sort the indices using the bubble sort. */
-            for (int i = 0; i < key.n; i++)
-                for (int j = 0; j < key.n-1; j++)
-                    if (key.idx[j] > key.idx[j+1]) {
-                        tmp = key.idx[j];
-                        key.idx[j] = key.idx[j+1];
-                        key.idx[j+1] = tmp;
+            for (int j = 0; j < key.n; j++)
+                for (int k = 0; k < key.n-1; k++)
+                    if (key.idx[k] > key.idx[k+1]) {
+                        tmp = key.idx[k];
+                        key.idx[k] = key.idx[k+1];
+                        key.idx[k+1] = tmp;
                     }
 
             /* Find the internal elements containing this boundary element. */
             value = g_tree_lookup(face_tree, &key);
             if (!value) cg_error_exit();
 
+            /* Set the face section of the element. */
+            mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]]
+                = s != -1 ? s : AEROCASTER_NO_ADJ;
+            if (value->elem_idx[1] != -1)
+                mesh->elems[value->elem_idx[1]].face_section[value->face_idx[1]] = s;
+        }
+    }
+
+    else {
+        /* Read the type as AerocasterMeshElementType. */
+        type = CGNSToAerocasterType(reader->elem_type[s]);
+        key.n = AerocasterMeshElementTypeNVerts[type];
+
+        /* The dimension of a boundary element must be 1-D if the mesh is
+           2-D or 2-D if the mesh is 3-D. Otherwise, ignore it. */
+        if ((mesh->dim == 2 && ElemTypeDim[type] != 1)
+            || (mesh->dim == 3 && ElemTypeDim[type] != 2))
+            return;
+
+        /* Get the number of vertices in each element. */
+        cg_npe(reader->elem_type[s], &key.n);
+
+        for (int i = 0; i < reader->nelems[s]; i++) {
+            /* Pointer to the index of the first vertex. */
+            start = &(reader->elem_conn[s][key.n * i]);
+
+            /* Read the indices of vertices. */
+            for (int j = 0; j < key.n; j++)
+                key.idx[j] = start[j];
+
+            /* Sort the indices using the bubble sort. */
+            for (int j = 0; j < key.n; j++)
+                for (int k = 0; k < key.n-1; k++)
+                    if (key.idx[k] > key.idx[k+1]) {
+                        tmp = key.idx[k];
+                        key.idx[k] = key.idx[k+1];
+                        key.idx[k+1] = tmp;
+                    }
+
+            /* Find the internal elements containing this boundary element. */
+            value = g_tree_lookup(face_tree, &key);
+            if (!value) cg_error_exit();
+
+            /* Set the face section of the element. */
             mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]] = s;
             if (value->elem_idx[1] != -1)
                 mesh->elems[value->elem_idx[1]].face_section[value->face_idx[1]] = s;
@@ -376,4 +456,20 @@ static gint CompareFace(gconstpointer a, gconstpointer b,
     for (int i = 0; i < fa->n; i++)
         if (fa->idx[i] != fb->idx[i]) return fa->idx[i] - fb->idx[i];
     return 0;
+}
+
+static gboolean FindAdjElem(gpointer key G_GNUC_UNUSED, gpointer value,
+                            gpointer data) {
+    FaceValue *fv;
+    AerocasterMesh *mesh;
+
+    fv = (FaceValue *)value;
+    mesh = (AerocasterMesh *)data;
+
+    mesh->elems[fv->elem_idx[0]].idx_adj[fv->face_idx[0]]
+        = fv->elem_idx[1] != -1 ? fv->elem_idx[1] : AEROCASTER_NO_ADJ;
+    if (fv->elem_idx[1] != -1)
+        mesh->elems[fv->elem_idx[1]].idx_adj[fv->face_idx[1]] = fv->elem_idx[0];
+
+    return false;
 }
