@@ -1,4 +1,4 @@
-#include "../include/AerocasterMesh.h"
+#include "../include/Mesh.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -17,11 +17,13 @@ typedef struct {
     int face_idx[2];
 } FaceValue;
 
-static void ReadInternal(AerocasterMesh *mesh, AerocasterCGNSMeshReader *reader, int s);
-static GTree *GetAdjacency(AerocasterMesh *mesh);
-static void ReadBoundary(AerocasterMesh *mesh, AerocasterCGNSMeshReader *reader, GTree *face_tree, int s);
+void ReadCGNSReader(Mesh *mesh);
 
-static AerocasterMeshElementType CGNSToAerocasterType(ElementType_t type);
+static void ReadInternal(Mesh *mesh, int s);
+static GTree *GetAdjacency(Mesh *mesh);
+static void ReadBoundary(Mesh *mesh, GTree *face_tree, int s);
+
+static MeshElemType CGNSToElemType(ElementType_t type);
 static void StoreToFaceTree(GTree *tree, int n, ...);
 
 static gint CompareFace(gconstpointer a, gconstpointer b,
@@ -29,47 +31,62 @@ static gint CompareFace(gconstpointer a, gconstpointer b,
 static gboolean FindAdjElem(gpointer key G_GNUC_UNUSED, gpointer value,
                             gpointer data);
 
-const int AerocasterMeshElementTypeNVerts[7] = {
-    [AEROCASTER_SEG] = 2,
-    [AEROCASTER_TRI] = 3,
-    [AEROCASTER_QUAD] = 4,
-    [AEROCASTER_TETRA] = 4,
-    [AEROCASTER_PYRA] = 5,
-    [AEROCASTER_PRISM] = 6,
-    [AEROCASTER_HEXA] = 8,
+const int MeshElemTypeNVerts[7] = {
+    [ELEMTYPE_SEG] = 2,
+    [ELEMTYPE_TRI] = 3,
+    [ELEMTYPE_QUAD] = 4,
+    [ELEMTYPE_TETRA] = 4,
+    [ELEMTYPE_PYRA] = 5,
+    [ELEMTYPE_PRISM] = 6,
+    [ELEMTYPE_HEXA] = 8,
 };
 
-const int AerocasterMeshElementTypeNFaces[7] = {
-    [AEROCASTER_SEG] = 1,
-    [AEROCASTER_TRI] = 3,
-    [AEROCASTER_QUAD] = 4,
-    [AEROCASTER_TETRA] = 4,
-    [AEROCASTER_PYRA] = 5,
-    [AEROCASTER_PRISM] = 5,
-    [AEROCASTER_HEXA] = 6,
+const int MeshElemTypeNFaces[7] = {
+    [ELEMTYPE_SEG] = 1,
+    [ELEMTYPE_TRI] = 3,
+    [ELEMTYPE_QUAD] = 4,
+    [ELEMTYPE_TETRA] = 4,
+    [ELEMTYPE_PYRA] = 5,
+    [ELEMTYPE_PRISM] = 5,
+    [ELEMTYPE_HEXA] = 6,
 };
 
 static const int ElemTypeDim[7] = {
-    [AEROCASTER_SEG] = 1,
-    [AEROCASTER_TRI] = 2,
-    [AEROCASTER_QUAD] = 2,
-    [AEROCASTER_TETRA] = 3,
-    [AEROCASTER_PYRA] = 3,
-    [AEROCASTER_PRISM] = 3,
-    [AEROCASTER_HEXA] = 3,
+    [ELEMTYPE_SEG] = 1,
+    [ELEMTYPE_TRI] = 2,
+    [ELEMTYPE_QUAD] = 2,
+    [ELEMTYPE_TETRA] = 3,
+    [ELEMTYPE_PYRA] = 3,
+    [ELEMTYPE_PRISM] = 3,
+    [ELEMTYPE_HEXA] = 3,
 };
 
-AerocasterMesh *AerocasterMesh_Create(void) {
-    AerocasterMesh *mesh = malloc(sizeof(*mesh));
+Mesh *Mesh_Create(CGNSReader *reader, MPI_Comm comm) {
+    Mesh *mesh;
+    int rank;
 
+    mesh = malloc(sizeof(*mesh));
+
+    mesh->reader = reader;
+    mesh->comm = comm;
     mesh->verts = NULL;
     mesh->elems = NULL;
+
+    /* Get rank. */
+    MPI_Comm_rank (mesh->comm, &rank);
+
+    /* Process 0 reads CGNS file. */
+    if (rank == 0) {
+        if (CGNSReader_Read(reader))
+            MPI_Abort(mesh->comm, -1);
+        ReadCGNSReader(mesh);
+    }
 
     return mesh;
 }
 
-void AerocasterMesh_ReadCGNSMeshReader(AerocasterMesh *mesh,
-                                       AerocasterCGNSMeshReader *reader) {
+void ReadCGNSReader(Mesh *mesh) {
+    const CGNSReader *const reader = mesh->reader;
     GTree *face_tree;
 
     /* Read metadata. */
@@ -86,7 +103,7 @@ void AerocasterMesh_ReadCGNSMeshReader(AerocasterMesh *mesh,
     /* Initialize some member variables. */
     for (int i = 0; i < reader->nelems_internal; i++)
         for (int j = 0; j < 6; j++)
-            mesh->elems[i].face_section[j] = AEROCASTER_UNSPEC_INTER;
+            mesh->elems[i].face_section[j] = FACE_SECT_UNSPEC_INTER;
 
     /* Read coordinates and section names. */
     for (int i = 0; i < reader->nverts; i++) {
@@ -95,12 +112,13 @@ void AerocasterMesh_ReadCGNSMeshReader(AerocasterMesh *mesh,
         if (mesh->dim == 3)
             mesh->verts[i].z = reader->z[i];
     }
-    memcpy(mesh->sect_name, reader->sect_name, sizeof(*mesh->sect_name) * reader->nsects);
+    memcpy(mesh->sect_name, reader->sect_name,
+           sizeof(*mesh->sect_name) * reader->nsects);
 
     /* Read internal elements. */
     for (int s = 0; s < reader->nsects; s++)
         if (reader->is_internal[s])
-            ReadInternal(mesh, reader, s);
+            ReadInternal(mesh, s);
 
     /* Calculate the adjacency info between elements. */
     face_tree = GetAdjacency(mesh);
@@ -108,29 +126,28 @@ void AerocasterMesh_ReadCGNSMeshReader(AerocasterMesh *mesh,
     /* Read boundary elements. */
     for (int s = 0; s < reader->nsects; s++)
         if (!reader->is_internal[s])
-            ReadBoundary(mesh, reader, face_tree, s);
+            ReadBoundary(mesh, face_tree, s);
 
     g_tree_destroy(face_tree);
 
     for (int i = 0; i < reader->nelems_internal; i++) {
-        for (int j = 0; j < AerocasterMeshElementTypeNFaces[mesh->elems[i].type]; j++) {
-            if (mesh->elems[i].face_section[j] == AEROCASTER_UNSPEC_INTER
-                && mesh->elems[i].idx_adj[j] == AEROCASTER_NO_ADJ)
-                mesh->elems[i].face_section[j] = AEROCASTER_UNSPEC_BNDRY;
+        for (int j = 0; j < MeshElemTypeNFaces[mesh->elems[i].type]; j++) {
+            if (mesh->elems[i].face_section[j] == FACE_SECT_UNSPEC_INTER
+                && mesh->elems[i].idx_adj[j] == IDX_ADJ_NO_ADJ)
+                mesh->elems[i].face_section[j] = FACE_SECT_UNSPEC_BNDRY;
         }
     }
 }
 
-void AerocasterMesh_Destroy(AerocasterMesh *mesh) {
+void Mesh_Destroy(Mesh *mesh) {
     free(mesh->verts); free(mesh->elems);
     free(mesh->sect_name);
 
     free(mesh);
 }
 
-static void ReadInternal(AerocasterMesh *mesh,
-                         AerocasterCGNSMeshReader *reader,
-                         int s) {
+static void ReadInternal(Mesh *mesh, int s) {
+    const CGNSReader *const reader = mesh->reader;
     int *start, npe;
 
     if (reader->elem_type[s] == CGNS_ENUMV(MIXED)) {
@@ -144,9 +161,9 @@ static void ReadInternal(AerocasterMesh *mesh,
             /* Pointer to ElementType. */
             start = &(reader->elem_conn[s][reader->elem_offset[s][i]]);
 
-            /* Read the type as AerocasterMeshElementType. */
-            mesh->elems[mesh->nelems].type = CGNSToAerocasterType(start[0]);
-            npe = AerocasterMeshElementTypeNVerts[mesh->elems[mesh->nelems].type];
+            /* Read the type as MeshElemType. */
+            mesh->elems[mesh->nelems].type = CGNSToElemType(start[0]);
+            npe = MeshElemTypeNVerts[mesh->elems[mesh->nelems].type];
 
             /* Read the indices of vertices. Additional nodes in a quadratic,
                cubic, or quartic element are ignored. */
@@ -158,10 +175,9 @@ static void ReadInternal(AerocasterMesh *mesh,
 
             mesh->nelems++;
         }
-    }
-    else {
-        /* For the other element types, the connectivity array contains only
-           the indices of vertices. */
+    } else {
+        /* For the other element types, the connectivity array contains the
+           indices of vertices only. */
 
         /* Get the number of vertices in each element. */
         cg_npe(reader->elem_type[s], &npe);
@@ -171,7 +187,7 @@ static void ReadInternal(AerocasterMesh *mesh,
             start = &(reader->elem_conn[s][npe * i]);
 
             /* All elements have same type. */
-            mesh->elems[mesh->nelems].type = CGNSToAerocasterType(reader->elem_type[s]);
+            mesh->elems[mesh->nelems].type = CGNSToElemType(reader->elem_type[s]);
 
             /* Read the indices of vertices. */
             for (int j = 0; j < npe; j++)
@@ -185,7 +201,7 @@ static void ReadInternal(AerocasterMesh *mesh,
     }
 }
 
-static GTree *GetAdjacency(AerocasterMesh *mesh) {
+static GTree *GetAdjacency(Mesh *mesh) {
     GTree *face_tree;
     int *v;
 
@@ -196,38 +212,38 @@ static GTree *GetAdjacency(AerocasterMesh *mesh) {
         v = mesh->elems[i].idx_verts;
 
         switch (mesh->elems[i].type) {
-        case AEROCASTER_TRI:
+        case ELEMTYPE_TRI:
             StoreToFaceTree(face_tree, 2, v[0], v[1], i, 0);
             StoreToFaceTree(face_tree, 2, v[1], v[2], i, 1);
             StoreToFaceTree(face_tree, 2, v[2], v[0], i, 2);
             break;
-        case AEROCASTER_QUAD:
+        case ELEMTYPE_QUAD:
             StoreToFaceTree(face_tree, 2, v[0], v[1], i, 0);
             StoreToFaceTree(face_tree, 2, v[1], v[2], i, 1);
             StoreToFaceTree(face_tree, 2, v[2], v[3], i, 2);
             StoreToFaceTree(face_tree, 2, v[3], v[0], i, 3);
             break;
-        case AEROCASTER_TETRA:
+        case ELEMTYPE_TETRA:
             StoreToFaceTree(face_tree, 3, v[0], v[2], v[1], i, 0);
             StoreToFaceTree(face_tree, 3, v[0], v[1], v[3], i, 1);
             StoreToFaceTree(face_tree, 3, v[1], v[2], v[3], i, 2);
             StoreToFaceTree(face_tree, 3, v[2], v[0], v[3], i, 3);
             break;
-        case AEROCASTER_PYRA:
+        case ELEMTYPE_PYRA:
             StoreToFaceTree(face_tree, 4, v[0], v[3], v[2], v[1], i, 0);
             StoreToFaceTree(face_tree, 3, v[0], v[1], v[4],       i, 1);
             StoreToFaceTree(face_tree, 3, v[1], v[2], v[4],       i, 2);
             StoreToFaceTree(face_tree, 3, v[2], v[3], v[4],       i, 3);
             StoreToFaceTree(face_tree, 3, v[3], v[0], v[4],       i, 4);
             break;
-        case AEROCASTER_PRISM:
+        case ELEMTYPE_PRISM:
             StoreToFaceTree(face_tree, 4, v[0], v[1], v[4], v[3], i, 0);
             StoreToFaceTree(face_tree, 4, v[1], v[2], v[5], v[4], i, 1);
             StoreToFaceTree(face_tree, 4, v[2], v[0], v[3], v[5], i, 2);
             StoreToFaceTree(face_tree, 3, v[0], v[2], v[1],       i, 3);
             StoreToFaceTree(face_tree, 3, v[3], v[4], v[5],       i, 4);
             break;
-        case AEROCASTER_HEXA:
+        case ELEMTYPE_HEXA:
             StoreToFaceTree(face_tree, 4, v[0], v[3], v[2], v[1], i, 0);
             StoreToFaceTree(face_tree, 4, v[0], v[1], v[5], v[4], i, 1);
             StoreToFaceTree(face_tree, 4, v[1], v[2], v[6], v[5], i, 2);
@@ -245,11 +261,11 @@ static GTree *GetAdjacency(AerocasterMesh *mesh) {
     return face_tree;
 }
 
-static void ReadBoundary(AerocasterMesh *mesh,
-                         AerocasterCGNSMeshReader *reader,
-                         GTree *face_tree, int s) {
+static void ReadBoundary(Mesh *mesh, GTree *face_tree, int s) {
+    const CGNSReader *const reader = mesh->reader;
+
     int *start, tmp;
-    AerocasterMeshElementType type;
+    MeshElemType type;
     FaceKey key;
     FaceValue *value;
 
@@ -258,9 +274,9 @@ static void ReadBoundary(AerocasterMesh *mesh,
             /* Pointer to ElementType. */
             start = &(reader->elem_conn[s][reader->elem_offset[s][i]]);
 
-            /* Read the type as AerocasterMeshElementType. */
-            type = CGNSToAerocasterType(start[0]);
-            key.n = AerocasterMeshElementTypeNVerts[type];
+            /* Read the type as MeshElemType. */
+            type = CGNSToElemType(start[0]);
+            key.n = MeshElemTypeNVerts[type];
 
             /* The dimension of a boundary element must be 1-D if the mesh is
                2-D or 2-D if the mesh is 3-D. Otherwise, ignore it. */
@@ -287,16 +303,16 @@ static void ReadBoundary(AerocasterMesh *mesh,
 
             /* Set the face section of the element. */
             mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]]
-                = s != -1 ? s : AEROCASTER_NO_ADJ;
+                = s != -1 ? s : IDX_ADJ_NO_ADJ;
             if (value->elem_idx[1] != -1)
                 mesh->elems[value->elem_idx[1]].face_section[value->face_idx[1]] = s;
         }
     }
 
     else {
-        /* Read the type as AerocasterMeshElementType. */
-        type = CGNSToAerocasterType(reader->elem_type[s]);
-        key.n = AerocasterMeshElementTypeNVerts[type];
+        /* Read the type as MeshElemType. */
+        type = CGNSToElemType(reader->elem_type[s]);
+        key.n = MeshElemTypeNVerts[type];
 
         /* The dimension of a boundary element must be 1-D if the mesh is
            2-D or 2-D if the mesh is 3-D. Otherwise, ignore it. */
@@ -336,20 +352,20 @@ static void ReadBoundary(AerocasterMesh *mesh,
     }
 }
 
-static AerocasterMeshElementType CGNSToAerocasterType(ElementType_t type) {
+static MeshElemType CGNSToElemType(ElementType_t type) {
     switch (type) {
     case CGNS_ENUMV(BAR_2):
     case CGNS_ENUMV(BAR_3):
     case CGNS_ENUMV(BAR_4):
     case CGNS_ENUMV(BAR_5):
-        return AEROCASTER_SEG;
+        return ELEMTYPE_SEG;
     case CGNS_ENUMV(TRI_3):
     case CGNS_ENUMV(TRI_6):
     case CGNS_ENUMV(TRI_9):
     case CGNS_ENUMV(TRI_10):
     case CGNS_ENUMV(TRI_12):
     case CGNS_ENUMV(TRI_15):
-        return AEROCASTER_TRI;
+        return ELEMTYPE_TRI;
     case CGNS_ENUMV(QUAD_4):
     case CGNS_ENUMV(QUAD_8):
     case CGNS_ENUMV(QUAD_9):
@@ -357,7 +373,7 @@ static AerocasterMeshElementType CGNSToAerocasterType(ElementType_t type) {
     case CGNS_ENUMV(QUAD_16):
     case CGNS_ENUMV(QUAD_P4_16):
     case CGNS_ENUMV(QUAD_25):
-        return AEROCASTER_QUAD;
+        return ELEMTYPE_QUAD;
     case CGNS_ENUMV(TETRA_4):
     case CGNS_ENUMV(TETRA_10):
     case CGNS_ENUMV(TETRA_16):
@@ -365,7 +381,7 @@ static AerocasterMeshElementType CGNSToAerocasterType(ElementType_t type) {
     case CGNS_ENUMV(TETRA_22):
     case CGNS_ENUMV(TETRA_34):
     case CGNS_ENUMV(TETRA_35):
-        return AEROCASTER_TETRA;
+        return ELEMTYPE_TETRA;
     case CGNS_ENUMV(PYRA_5):
     case CGNS_ENUMV(PYRA_13):
     case CGNS_ENUMV(PYRA_14):
@@ -375,7 +391,7 @@ static AerocasterMeshElementType CGNSToAerocasterType(ElementType_t type) {
     case CGNS_ENUMV(PYRA_P4_29):
     case CGNS_ENUMV(PYRA_50):
     case CGNS_ENUMV(PYRA_55):
-        return AEROCASTER_PYRA;
+        return ELEMTYPE_PYRA;
     case CGNS_ENUMV(PENTA_6):
     case CGNS_ENUMV(PENTA_15):
     case CGNS_ENUMV(PENTA_18):
@@ -385,7 +401,7 @@ static AerocasterMeshElementType CGNSToAerocasterType(ElementType_t type) {
     case CGNS_ENUMV(PENTA_33):
     case CGNS_ENUMV(PENTA_66):
     case CGNS_ENUMV(PENTA_75):
-        return AEROCASTER_PRISM;
+        return ELEMTYPE_PRISM;
     case CGNS_ENUMV(HEXA_8):
     case CGNS_ENUMV(HEXA_20):
     case CGNS_ENUMV(HEXA_27):
@@ -395,7 +411,7 @@ static AerocasterMeshElementType CGNSToAerocasterType(ElementType_t type) {
     case CGNS_ENUMV(HEXA_44):
     case CGNS_ENUMV(HEXA_98):
     case CGNS_ENUMV(HEXA_125):
-        return AEROCASTER_HEXA;
+        return ELEMTYPE_HEXA;
     default:
         cg_error_exit();
         return -1;
@@ -461,13 +477,13 @@ static gint CompareFace(gconstpointer a, gconstpointer b,
 static gboolean FindAdjElem(gpointer key G_GNUC_UNUSED, gpointer value,
                             gpointer data) {
     FaceValue *fv;
-    AerocasterMesh *mesh;
+    Mesh *mesh;
 
     fv = (FaceValue *)value;
-    mesh = (AerocasterMesh *)data;
+    mesh = (Mesh *)data;
 
     mesh->elems[fv->elem_idx[0]].idx_adj[fv->face_idx[0]]
-        = fv->elem_idx[1] != -1 ? fv->elem_idx[1] : AEROCASTER_NO_ADJ;
+        = fv->elem_idx[1] != -1 ? fv->elem_idx[1] : IDX_ADJ_NO_ADJ;
     if (fv->elem_idx[1] != -1)
         mesh->elems[fv->elem_idx[1]].idx_adj[fv->face_idx[1]] = fv->elem_idx[0];
 

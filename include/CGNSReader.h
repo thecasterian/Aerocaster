@@ -6,7 +6,10 @@
 
 #define NAME_MAX_LEN 50
 
-typedef struct {
+#define CGNSREADER_ERROR -1
+
+typedef struct _cgns_reader {
+    char file_name[NAME_MAX_LEN];       /* CGNS file name. */
     int fn;                             /* CGNS file number. */
 
     char base_name[NAME_MAX_LEN];       /* Name of base. */
@@ -30,10 +33,10 @@ typedef struct {
     int **elem_offset;                  /* Element offset of each section; ignored for non-mixed sections. */
 
     bool *is_internal;                  /* Is this setion internal? (T/F) */
-} AerocasterCGNSMeshReader;
+} CGNSReader;
 
-AerocasterCGNSMeshReader *AerocasterCGNSMeshReader_Create(void);
-void AerocasterCGNSMeshReader_Read(AerocasterCGNSMeshReader *reader, const char *file_name);
-void AerocasterCGNSMeshReader_Destroy(AerocasterCGNSMeshReader *reader);
+CGNSReader *CGNSReader_Create(const char *filename);
+int CGNSReader_Read(CGNSReader *reader);
+void CGNSReader_Destroy(CGNSReader *reader);
 
 #endif

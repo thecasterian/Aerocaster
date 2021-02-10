@@ -1,17 +1,20 @@
-#include "../include/AerocasterCGNSReader.h"
+#include "../include/CGNSReader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
-static void open_file(AerocasterCGNSMeshReader *reader, const char *file_name);
-static void read_base(AerocasterCGNSMeshReader *reader);
-static void read_zone(AerocasterCGNSMeshReader *reader);
-static void read_coord(AerocasterCGNSMeshReader *reader);
-static void read_sect(AerocasterCGNSMeshReader *reader);
-static int dim_elem(ElementType_t elem_type);
+static int OpenFile(CGNSReader *reader);
+static int ReadBase(CGNSReader *reader);
+static int ReadZone(CGNSReader *reader);
+static int ReadCoord(CGNSReader *reader);
+static int ReadSect(CGNSReader *reader);
+static int DimElem(ElementType_t elem_type);
 
-AerocasterCGNSMeshReader *AerocasterCGNSMeshReader_Create(void) {
-    AerocasterCGNSMeshReader *reader = malloc(sizeof(*reader));
+CGNSReader *CGNSReader_Create(const char *filename) {
+    CGNSReader *reader = malloc(sizeof(*reader));
+
+    /* Copy file name. */
+    snprintf(reader->file_name, NAME_MAX_LEN, "%s", filename);
 
     /* Nullify all pointers for memory safety. */
     reader->x = reader->y = reader->z = NULL;
@@ -24,16 +27,17 @@ AerocasterCGNSMeshReader *AerocasterCGNSMeshReader_Create(void) {
     return reader;
 }
 
-void AerocasterCGNSMeshReader_Read(AerocasterCGNSMeshReader *reader, const char *file_name) {
-    open_file(reader, file_name);
-    read_base(reader);
-    read_zone(reader);
-    read_coord(reader);
-    read_sect(reader);
+int CGNSReader_Read(CGNSReader *reader) {
+    if (OpenFile(reader)) return CGNSREADER_ERROR;
+    if (ReadBase(reader)) return CGNSREADER_ERROR;
+    if (ReadZone(reader)) return CGNSREADER_ERROR;
+    if (ReadCoord(reader)) return CGNSREADER_ERROR;
+    if (ReadSect(reader)) return CGNSREADER_ERROR;
     printf("read done\n");
+    return 0;
 }
 
-void AerocasterCGNSMeshReader_Destroy(AerocasterCGNSMeshReader *reader) {
+void CGNSReader_Destroy(CGNSReader *reader) {
     free(reader->x); free(reader->y); free(reader->z);
     free(reader->sect_name);
     free(reader->elem_idx_start); free(reader->elem_idx_end);
@@ -48,77 +52,85 @@ void AerocasterCGNSMeshReader_Destroy(AerocasterCGNSMeshReader *reader) {
     free(reader);
 }
 
-static void open_file(AerocasterCGNSMeshReader *reader, const char *file_name) {
+static int OpenFile(CGNSReader *reader) {
     int file_type;
 
     /* Check validity. */
-    if (cg_is_cgns(file_name, &file_type)) {
+    if (cg_is_cgns(reader->file_name, &file_type)) {
         printf("error: invalid file\n");
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     }
 
     /* Open CGNS file for read-only. */
-    if (cg_open(file_name, CG_MODE_READ, &reader->fn))
-        cg_error_exit();
-    printf("read file: %s\n", file_name);
+    if (cg_open(reader->file_name, CG_MODE_READ, &reader->fn)) {
+        printf("error: cannot open file\n");
+        return CGNSREADER_ERROR;
+    }
+    printf("read file: %s\n", reader->file_name);
+
+    return 0;
 }
 
-static void read_base(AerocasterCGNSMeshReader *reader) {
+static int ReadBase(CGNSReader *reader) {
     int nbases;
 
     /* Read the number of bases. */
     if (cg_nbases(reader->fn, &nbases))
-        cg_error_exit();
+        return CGNSREADER_ERROR;
 
     /* Check if only one base exists. */
     if (nbases > 1) {
         printf("error: expected only one base\n");
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     }
 
     /* Read the base. */
     if (cg_base_read(reader->fn, 1,
                      reader->base_name, &reader->cell_dim, &reader->phys_dim))
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     printf("base \"%s\": cell dimension %d, physical dimension %d\n",
            reader->base_name, reader->cell_dim, reader->phys_dim);
+
+    return 0;
 }
 
-static void read_zone(AerocasterCGNSMeshReader *reader) {
+static int ReadZone(CGNSReader *reader) {
     int nzones;
     ZoneType_t zone_type;
     int zone_size[3];
 
-    /* Reade the number of zones. */
+    /* Read the number of zones. */
     if (cg_nzones(reader->fn, 1, &nzones))
-        cg_error_exit();
+        return CGNSREADER_ERROR;
 
     /* Check if only one zone exists. */
     if (nzones > 1) {
         printf("error: expected only one zone\n");
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     }
 
     /* Read the zone type. */
     if (cg_zone_type(reader->fn, 1, 1, &zone_type))
-        cg_error_exit();
+        return CGNSREADER_ERROR;
 
     /* Check if the zone type is `Unstructured`. */
     if (zone_type != CGNS_ENUMV(Unstructured)) {
         printf("error: expected unstructured mesh\n");
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     }
 
     /* Read the zone name and sizes. */
     if (cg_zone_read(reader->fn, 1, 1, reader->zone_name, zone_size))
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     reader->nverts = zone_size[0];
     reader->nelems_internal = zone_size[1];
     printf("zone \"%s\": #vertices %d, #internal elements %d\n",
            reader->zone_name, reader->nverts, reader->nelems_internal);
+
+    return 0;
 }
 
-static void read_coord(AerocasterCGNSMeshReader *reader) {
+static int ReadCoord(CGNSReader *reader) {
     int rmin, rmax;
 
     /* Allocate the coordinate arrays. */
@@ -134,28 +146,30 @@ static void read_coord(AerocasterCGNSMeshReader *reader) {
     if (cg_coord_read(reader->fn, 1, 1, "CoordinateX",
                       CGNS_ENUMV(RealDouble), &rmin, &rmax, reader->x)) {
         printf("error: reading x coordinates failed\n");
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     }
     if (cg_coord_read(reader->fn, 1, 1, "CoordinateY",
                       CGNS_ENUMV(RealDouble), &rmin, &rmax, reader->y)) {
         printf("error: reading y coordinates failed\n");
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     }
     if (reader->cell_dim > 2)
         if (cg_coord_read(reader->fn, 1, 1, "CoordinateZ",
                         CGNS_ENUMV(RealDouble), &rmin, &rmax, reader->z)) {
             printf("error: reading z coordinates failed\n");
-            cg_error_exit();
+            return CGNSREADER_ERROR;
         }
+
+    return 0;
 }
 
-static void read_sect(AerocasterCGNSMeshReader *reader) {
+static int ReadSect(CGNSReader *reader) {
     int nbndry, parent_flag, parent_data;
     ElementType_t first_elem_type = CGNS_ENUMV(ElementTypeNull);
 
     /* Read the nubmer of sections. */
     if (cg_nsections(reader->fn, 1, 1, &reader->nsects))
-        cg_error_exit();
+        return CGNSREADER_ERROR;
     printf("total %d sections\n", reader->nsects);
 
     /* Allocate the arrays. */
@@ -175,12 +189,12 @@ static void read_sect(AerocasterCGNSMeshReader *reader) {
                             reader->sect_name[s], &reader->elem_type[s],
                             &reader->elem_idx_start[s], &reader->elem_idx_end[s],
                             &nbndry, &parent_flag))
-            cg_error_exit();
+            return CGNSREADER_ERROR;
         reader->nelems[s] = reader->elem_idx_end[s] - reader->elem_idx_start[s] + 1;
 
         /* Read the connectivity data size. */
         if (cg_ElementDataSize(reader->fn, 1, 1, s+1, &reader->elem_conn_size[s]))
-            cg_error_exit();
+            return CGNSREADER_ERROR;
 
         /* Read the connectivity. */
         reader->elem_conn[s] = malloc(sizeof(*reader->elem_conn[s])
@@ -193,25 +207,25 @@ static void read_sect(AerocasterCGNSMeshReader *reader) {
             if (cg_poly_elements_read(reader->fn, 1, 1, s+1,
                                       reader->elem_conn[s], reader->elem_offset[s],
                                       &parent_data))
-                cg_error_exit();
+                return CGNSREADER_ERROR;
             first_elem_type = reader->elem_conn[s][0];
             break;
         case CGNS_ENUMV(NGON_n):
         case CGNS_ENUMV(NFACE_n):
             printf("error: arbitrary polyhedral elements are not supported\n");
-            cg_error_exit();
+            return CGNSREADER_ERROR;
             break;
         default:
             if (cg_elements_read(reader->fn, 1, 1, s+1,
                                  reader->elem_conn[s], NULL))
-                cg_error_exit();
+                return CGNSREADER_ERROR;
             first_elem_type = reader->elem_type[s];
         }
 
         /* Check if the section contains internal elements or not from the
            dimension of the first element. */
-        if ((reader->cell_dim == 2 && dim_elem(first_elem_type) == 2)
-            || (reader->cell_dim == 3 && dim_elem(first_elem_type) == 3))
+        if ((reader->cell_dim == 2 && DimElem(first_elem_type) == 2)
+            || (reader->cell_dim == 3 && DimElem(first_elem_type) == 3))
             reader->is_internal[s] = true;
         else
             reader->is_internal[s] = false;
@@ -219,10 +233,10 @@ static void read_sect(AerocasterCGNSMeshReader *reader) {
         /* Elements with different dimensions in one section is not allowed. */
         if (reader->elem_type[s] == CGNS_ENUMV(MIXED))
             for (int i = 1; i < reader->nelems[s]; i++)
-                if (dim_elem(first_elem_type)
-                    != dim_elem(reader->elem_conn[s][reader->elem_offset[s][i]])) {
+                if (DimElem(first_elem_type)
+                    != DimElem(reader->elem_conn[s][reader->elem_offset[s][i]])) {
                     printf("error: elements dimensions are different\n");
-                    cg_error_exit();
+                    return CGNSREADER_ERROR;
                 }
 
         printf("section \"%s\": type %s, #elements %d, %s\n",
@@ -230,9 +244,11 @@ static void read_sect(AerocasterCGNSMeshReader *reader) {
                reader->nelems[s],
                reader->is_internal[s] ? "internal" : "boundary");
     }
+
+    return 0;
 }
 
-static int dim_elem(ElementType_t elem_type) {
+static int DimElem(ElementType_t elem_type) {
     switch (elem_type) {
     case CGNS_ENUMV(ElementTypeNull):
     case CGNS_ENUMV(ElementTypeUserDefined):

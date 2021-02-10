@@ -1,8 +1,8 @@
-CC = gcc
+CC = mpicc
 AR = ar r
 
 CFLAGS = -Wall -Wextra -O2
-INCLUDE = -I../include -I/usr/include/glib-2.0
+INCLUDE = -I/usr/include/glib-2.0
 
 SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c, ../build/%.o, $(SRCS))
