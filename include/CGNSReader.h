@@ -16,20 +16,20 @@ typedef struct _cgns_reader {
     int phys_dim;                       /* Physical dimension (2-D or 3-D). */
 
     char zone_name[NAME_MAX_LEN];       /* Name of zone. */
-    int nverts;                         /* Number of vertices. */
-    int nelems_internal;                /* Total number of internal (non-boundary) elements. */
+    cgsize_t nverts;                    /* Number of vertices. */
+    cgsize_t nelems_internal;           /* Total number of internal (non-boundary) elements. */
 
     double *x, *y, *z;                  /* Coordinates of vertices. */
 
     int nsects;                         /* Number of sections. */
     char (*sect_name)[NAME_MAX_LEN];    /* Name of each section. */
-    int *elem_idx_start;                /* First element index of each section. */
-    int *elem_idx_end;                  /* Last element index of each section. */
-    int *nelems;                        /* Number of elements in each section. */
+    cgsize_t *elem_idx_start;           /* First element index of each section. */
+    cgsize_t *elem_idx_end;             /* Last element index of each section. */
+    cgsize_t *nelems;                   /* Number of elements in each section. */
     ElementType_t *elem_type;           /* Element type of each section. */
-    int *elem_conn_size;                /* Size of element connectivity array of each section. */
-    int **elem_conn;                    /* Element connectivity array of each section. */
-    int **elem_offset;                  /* Element offset of each section; ignored for non-mixed sections. */
+    cgsize_t *elem_conn_size;           /* Size of element connectivity array of each section. */
+    cgsize_t **elem_conn;               /* Element connectivity array of each section. */
+    cgsize_t **elem_offset;             /* Element offset of each section; ignored for non-mixed sections. */
 
     bool *is_internal;                  /* Is this setion internal? (T/F) */
 } CGNSReader;

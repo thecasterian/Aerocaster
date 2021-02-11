@@ -9,12 +9,12 @@
 
 typedef struct {
     int n;              /* Number of vertices. */
-    int idx[4];         /* Indices of vertices. */
+    size_t idx[4];      /* Indices of vertices. */
 } FaceKey;
 
 typedef struct {
-    int elem_idx[2];
-    int face_idx[2];
+    size_t elem_idx[2];
+    size_t face_idx[2];
 } FaceValue;
 
 static const int ElemTypeDim[7] = {
@@ -134,7 +134,7 @@ static int ReadBase(CGNSReader *reader) {
 static int ReadZone(CGNSReader *reader) {
     int nzones;
     ZoneType_t zone_type;
-    int zone_size[3];
+    cgsize_t zone_size[3];
 
     /* Read the number of zones. */
     if (cg_nzones(reader->fn, 1, &nzones))
@@ -161,14 +161,15 @@ static int ReadZone(CGNSReader *reader) {
         return READER_ERROR;
     reader->nverts = zone_size[0];
     reader->nelems_internal = zone_size[1];
-    printf("zone \"%s\": #vertices %d, #internal elements %d\n",
-           reader->zone_name, reader->nverts, reader->nelems_internal);
+    printf("zone \"%s\": #vertices %ld, #internal elements %ld\n",
+           reader->zone_name,
+           (long)reader->nverts, (long)reader->nelems_internal);
 
     return 0;
 }
 
 static int ReadCoord(CGNSReader *reader) {
-    int rmin, rmax;
+    cgsize_t rmin, rmax;
 
     /* Allocate the coordinate arrays. */
     reader->x = malloc(sizeof(*reader->x) * reader->nverts);
@@ -201,7 +202,8 @@ static int ReadCoord(CGNSReader *reader) {
 }
 
 static int ReadSect(CGNSReader *reader) {
-    int nbndry, parent_flag, parent_data;
+    int nbndry, parent_flag;
+    cgsize_t parent_data;
     ElementType_t first_elem_type = CGNS_ENUMV(ElementTypeNull);
 
     /* Read the nubmer of sections. */
@@ -276,9 +278,9 @@ static int ReadSect(CGNSReader *reader) {
                     return READER_ERROR;
                 }
 
-        printf("section \"%s\": type %s, #elements %d, %s\n",
+        printf("section \"%s\": type %s, #elements %ld, %s\n",
                reader->sect_name[s], ElementTypeName[reader->elem_type[s]],
-               reader->nelems[s],
+               (long)reader->nelems[s],
                reader->is_internal[s] ? "internal" : "boundary");
     }
 
@@ -374,7 +376,8 @@ static void CGNSReader_WriteToMesh(void *_reader, Mesh *mesh) {
 }
 
 static void ReadInternal(CGNSReader *reader, Mesh *mesh, int s) {
-    int *start, npe;
+    cgsize_t *start;
+    int npe;
 
     if (reader->elem_type[s] == CGNS_ENUMV(MIXED)) {
         /* In the element type of a section is `MIXED`, the connectivity of each
@@ -429,12 +432,12 @@ static void ReadInternal(CGNSReader *reader, Mesh *mesh, int s) {
 
 static GTree *GetAdjacency(Mesh *mesh) {
     GTree *face_tree;
-    int *v;
+    size_t *v;
 
     face_tree = g_tree_new_full(CompareFace, NULL, g_free, g_free);
 
     /* Build the face tree. */
-    for (int i = 0; i < mesh->nelems; i++) {
+    for (size_t i = 0; i < mesh->nelems; i++) {
         v = mesh->elems[i].idx_verts;
 
         switch (mesh->elems[i].type) {
@@ -489,7 +492,7 @@ static GTree *GetAdjacency(Mesh *mesh) {
 
 static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
                          GTree *face_tree, int s) {
-    int *start, tmp;
+    cgsize_t *start, tmp;
     MeshElemType type;
     FaceKey key;
     FaceValue *value;
@@ -527,9 +530,8 @@ static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
             if (!value) cg_error_exit();
 
             /* Set the face section of the element. */
-            mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]]
-                = s != -1 ? s : IDX_ADJ_NO_ADJ;
-            if (value->elem_idx[1] != -1)
+            mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]] = s;
+            if (value->elem_idx[1] != (size_t)(-1))
                 mesh->elems[value->elem_idx[1]].face_section[value->face_idx[1]] = s;
         }
     }
@@ -571,7 +573,7 @@ static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
 
             /* Set the face section of the element. */
             mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]] = s;
-            if (value->elem_idx[1] != -1)
+            if (value->elem_idx[1] != (size_t)(-1))
                 mesh->elems[value->elem_idx[1]].face_section[value->face_idx[1]] = s;
         }
     }
@@ -647,12 +649,12 @@ static void StoreToFaceTree(GTree *tree, int n, ...) {
     va_list ap;
     FaceKey key_static, *key;
     FaceValue *value;
-    int tmp;
+    size_t tmp;
 
     va_start(ap, n);
 
     key_static.n = n;
-    for (int i = 0; i < n; i++) key_static.idx[i] = va_arg(ap, int);
+    for (int i = 0; i < n; i++) key_static.idx[i] = va_arg(ap, size_t);
 
     /* Sort the indices using the bubble sort. */
     for (int i = 0; i < n; i++)
@@ -666,7 +668,7 @@ static void StoreToFaceTree(GTree *tree, int n, ...) {
     value = g_tree_lookup(tree, &key_static);
 
     if (value) {
-        if (value->elem_idx[1] != -1) cg_error_exit();
+        if (value->elem_idx[1] != (size_t)(-1)) cg_error_exit();
 
         value->elem_idx[1] = va_arg(ap, int);
         value->face_idx[1] = va_arg(ap, int);
@@ -678,7 +680,7 @@ static void StoreToFaceTree(GTree *tree, int n, ...) {
         memcpy(key, &key_static, sizeof(key_static));
         value->elem_idx[0] = va_arg(ap, int);
         value->face_idx[0] = va_arg(ap, int);
-        value->elem_idx[1] = value->face_idx[1] = -1;
+        value->elem_idx[1] = value->face_idx[1] = (size_t)(-1);
 
         g_tree_insert(tree, key, value);
     }
@@ -694,8 +696,10 @@ static gint CompareFace(gconstpointer a, gconstpointer b,
     fb = (FaceKey *)b;
 
     if (fa->n != fb->n) return fa->n - fb->n;
-    for (int i = 0; i < fa->n; i++)
-        if (fa->idx[i] != fb->idx[i]) return fa->idx[i] - fb->idx[i];
+    for (int i = 0; i < fa->n; i++) {
+        if (fa->idx[i] < fb->idx[i]) return -1;
+        else if (fa->idx[i] > fb->idx[i]) return 1;
+    }
     return 0;
 }
 
@@ -708,8 +712,8 @@ static gboolean FindAdjElem(gpointer key G_GNUC_UNUSED, gpointer value,
     mesh = (Mesh *)data;
 
     mesh->elems[fv->elem_idx[0]].idx_adj[fv->face_idx[0]]
-        = fv->elem_idx[1] != -1 ? fv->elem_idx[1] : IDX_ADJ_NO_ADJ;
-    if (fv->elem_idx[1] != -1)
+        = fv->elem_idx[1] != (size_t)(-1) ? fv->elem_idx[1] : IDX_ADJ_NO_ADJ;
+    if (fv->elem_idx[1] != (size_t)(-1))
         mesh->elems[fv->elem_idx[1]].idx_adj[fv->face_idx[1]] = fv->elem_idx[0];
 
     return false;

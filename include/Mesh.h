@@ -22,7 +22,7 @@ extern const int MeshElemTypeNVerts[7];
 extern const int MeshElemTypeNFaces[7];
 
 /* The value of idx_adj of an element if the adjacent element does not exist. */
-#define IDX_ADJ_NO_ADJ -1
+#define IDX_ADJ_NO_ADJ ((size_t)(-1))
 /* The value of face_section of an element if the section is unspecified and the
    adjacent element does not exist. */
 #define FACE_SECT_UNSPEC_BNDRY -1
@@ -34,8 +34,8 @@ typedef struct _mesh_elem {
     MeshElemType type;                  /* Element type. */
     int section;                        /* Section number this element belongs to. */
 
-    int idx_verts[8];                   /* Indices of vertices. */
-    int idx_adj[6];                     /* Indices of adjacent elements. */
+    size_t idx_verts[8];                /* Indices of vertices. */
+    size_t idx_adj[6];                  /* Indices of adjacent elements. */
     int face_section[6];                /* Section number each face belongs to. */
 
     double cx, cy, cz;                  /* Coordinates of centroid. */
@@ -48,8 +48,8 @@ typedef struct _mesh {
     MPI_Comm comm;                      /* MPI communicator. */
 
     int dim;                            /* Mesh dimension. */
-    int nverts;                         /* Number of vertices. */
-    int nelems;                         /* Number of elements. */
+    size_t nverts;                      /* Number of vertices. */
+    size_t nelems;                      /* Number of elements. */
     MeshVert *verts;                    /* Vertices. */
     MeshElem *elems;                    /* Elements. */
 

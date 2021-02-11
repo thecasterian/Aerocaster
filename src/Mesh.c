@@ -4,8 +4,6 @@
 #include <string.h>
 #include <stdarg.h>
 
-#include <cgnslib.h>
-
 const int MeshElemTypeNVerts[7] = {
     [ELEMTYPE_SEG] = 2,
     [ELEMTYPE_TRI] = 3,
