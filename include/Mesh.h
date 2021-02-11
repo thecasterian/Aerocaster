@@ -1,14 +1,14 @@
 #ifndef AEROCASTER_MESH_H
 #define AEROCASTER_MESH_H
 
-#include "CGNSReader.h"
+#include "ReaderInterface.h"
 #include <mpi.h>
 
-typedef struct {
+typedef struct _mesh_vert {
     double x, y, z;                     /* Coordinates. */
 } MeshVert;
 
-typedef enum {
+typedef enum _mesh_elem_type {
     ELEMTYPE_SEG,                       /* Line segment. */
     ELEMTYPE_TRI,                       /* Triangle. */
     ELEMTYPE_QUAD,                      /* Quadrilateral. */
@@ -24,13 +24,13 @@ extern const int MeshElemTypeNFaces[7];
 /* The value of idx_adj of an element if the adjacent element does not exist. */
 #define IDX_ADJ_NO_ADJ -1
 /* The value of face_section of an element if the section is unspecified and the
-adjacent element does not exist. */
+   adjacent element does not exist. */
 #define FACE_SECT_UNSPEC_BNDRY -1
 /* The value of face_section of an element if the section is unspecified and the
-adjacent element exists. */
+   adjacent element exists. */
 #define FACE_SECT_UNSPEC_INTER -2
 
-typedef struct {
+typedef struct _mesh_elem {
     MeshElemType type;                  /* Element type. */
     int section;                        /* Section number this element belongs to. */
 
@@ -43,8 +43,8 @@ typedef struct {
     double face_area[6];                /* Area (length for 2-D) of faces. */
 } MeshElem;
 
-typedef struct {
-    CGNSReader *reader;                 /* CGNS reader. */
+typedef struct _mesh {
+    ReaderInterface *reader;            /* Mesh file reader. */
     MPI_Comm comm;                      /* MPI communicator. */
 
     int dim;                            /* Mesh dimension. */
@@ -57,7 +57,7 @@ typedef struct {
     char (*sect_name)[NAME_MAX_LEN];    /* Name of sections. */
 } Mesh;
 
-Mesh *Mesh_Create(CGNSReader *reader, MPI_Comm comm);
+Mesh *Mesh_Create(ReaderInterface *reader, MPI_Comm comm);
 void Mesh_Destroy(Mesh *mesh);
 
 #endif

@@ -4,12 +4,11 @@
 #include <cgnslib.h>
 #include <stdbool.h>
 
-#define NAME_MAX_LEN 50
-
-#define CGNSREADER_ERROR -1
+#include "ReaderInterface.h"
 
 typedef struct _cgns_reader {
-    char file_name[NAME_MAX_LEN];       /* CGNS file name. */
+    ReaderInterface interface;
+
     int fn;                             /* CGNS file number. */
 
     char base_name[NAME_MAX_LEN];       /* Name of base. */
@@ -35,8 +34,6 @@ typedef struct _cgns_reader {
     bool *is_internal;                  /* Is this setion internal? (T/F) */
 } CGNSReader;
 
-CGNSReader *CGNSReader_Create(const char *filename);
-int CGNSReader_Read(CGNSReader *reader);
-void CGNSReader_Destroy(CGNSReader *reader);
+ReaderInterface *CGNSReader_Create(void);
 
 #endif
