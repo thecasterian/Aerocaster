@@ -40,9 +40,9 @@ Mesh *Mesh_Create(ReaderInterface *reader, MPI_Comm comm) {
 
     /* Process 0 reads CGNS file. */
     if (rank == 0) {
-        if (CGNSReader_Read(reader))
+        if (ReaderInterface_ReadFile(reader))
             MPI_Abort(mesh->comm, -1);
-        ReadCGNSReader(mesh);
+        ReaderInterface_WriteToMesh(reader, mesh);
     }
 
     return mesh;

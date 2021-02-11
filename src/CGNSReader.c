@@ -27,11 +27,11 @@ static const int ElemTypeDim[7] = {
     [ELEMTYPE_HEXA] = 3,
 };
 
-static int CGNSReader_Read(void *_reader, const char *file_name);
+static int CGNSReader_Read(void *_reader);
 static void CGNSReader_WriteToMesh(void *_reader, Mesh *mesh);
 static void CGNSReader_Destroy(void *_reader);
 
-static int OpenFile(CGNSReader *reader, const char *file_name);
+static int OpenFile(CGNSReader *reader);
 static int ReadBase(CGNSReader *reader);
 static int ReadZone(CGNSReader *reader);
 static int ReadCoord(CGNSReader *reader);
@@ -51,11 +51,13 @@ static gint CompareFace(gconstpointer a, gconstpointer b,
 static gboolean FindAdjElem(gpointer key G_GNUC_UNUSED, gpointer value,
                             gpointer data);
 
-ReaderInterface *CGNSReader_Create(void) {
+ReaderInterface *ReaderInterface_CreateCGNSReader(const char *file_name) {
     CGNSReader *reader = malloc(sizeof(*reader));
 
     /* Initialize the interface. */
     reader->interface.reader = reader;
+    snprintf(reader->interface.file_name, FILENAME_MAX_LEN, "%s", file_name);
+
     reader->interface.read_file = CGNSReader_Read;
     reader->interface.write_to_mesh = CGNSReader_WriteToMesh;
     reader->interface.destroy = CGNSReader_Destroy;
@@ -71,10 +73,10 @@ ReaderInterface *CGNSReader_Create(void) {
     return &reader->interface;
 }
 
-static int CGNSReader_Read(void *_reader, const char *file_name) {
+static int CGNSReader_Read(void *_reader) {
     CGNSReader *const reader = _reader;
 
-    if (OpenFile(reader, file_name))
+    if (OpenFile(reader))
         return READER_ERROR;
     if (ReadBase(reader))
         return READER_ERROR;
@@ -89,21 +91,21 @@ static int CGNSReader_Read(void *_reader, const char *file_name) {
     return 0;
 }
 
-static int OpenFile(CGNSReader *reader, const char *file_name) {
+static int OpenFile(CGNSReader *reader) {
     int file_type;
 
     /* Check validity. */
-    if (cg_is_cgns(file_name, &file_type)) {
+    if (cg_is_cgns(reader->interface.file_name, &file_type)) {
         printf("error: invalid file\n");
         return READER_ERROR;
     }
 
     /* Open CGNS file for read-only. */
-    if (cg_open(file_name, CG_MODE_READ, &reader->fn)) {
+    if (cg_open(reader->interface.file_name, CG_MODE_READ, &reader->fn)) {
         printf("error: cannot open file\n");
         return READER_ERROR;
     }
-    printf("read file: %s\n", file_name);
+    printf("read file: %s\n", reader->interface.file_name);
 
     return 0;
 }

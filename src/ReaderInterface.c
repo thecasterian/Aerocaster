@@ -1,8 +1,7 @@
 #include "../include/ReaderInterface.h"
 
-void ReaderInterface_ReadFile(ReaderInterface *interface,
-                              const char *file_name) {
-    interface->read_file(interface->reader, file_name);
+int ReaderInterface_ReadFile(ReaderInterface *interface) {
+    return interface->read_file(interface->reader);
 }
 
 void ReaderInterface_WriteToMesh(ReaderInterface *interface, Mesh *mesh) {
