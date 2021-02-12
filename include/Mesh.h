@@ -46,7 +46,6 @@ typedef struct _mesh_elem {
 } MeshElem;
 
 typedef struct _mesh {
-    ReaderInterface *reader;                /* Mesh file reader. */
     MPI_Comm comm;                          /* MPI communicator. */
 
     int dim;                                /* Mesh dimension. */

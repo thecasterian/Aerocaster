@@ -28,7 +28,7 @@ static const int ElemTypeDim[7] = {
 };
 
 static int CGNSReader_Read(void *_reader);
-static void CGNSReader_WriteToMesh(void *_reader, Mesh *mesh);
+static int CGNSReader_WriteToMesh(void *_reader, Mesh *mesh);
 static void CGNSReader_Destroy(void *_reader);
 
 static int OpenFile(CGNSReader *reader);
@@ -38,13 +38,13 @@ static int ReadCoord(CGNSReader *reader);
 static int ReadSect(CGNSReader *reader);
 static int DimElem(ElementType_t elem_type);
 
-static void ReadInternal(CGNSReader *reader, Mesh *mesh, int s);
+static int ReadInternal(CGNSReader *reader, Mesh *mesh, int s);
 static GTree *GetAdjacency(Mesh *mesh);
-static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
-                         GTree *face_tree, int s);
+static int ReadBoundary(CGNSReader *reader, Mesh *mesh,
+                        GTree *face_tree, int s);
 
 static MeshElemType CGNSToElemType(ElementType_t type);
-static void StoreToFaceTree(GTree *tree, int n, ...);
+static int StoreToFaceTree(GTree *tree, int n, ...);
 
 static gint CompareFace(gconstpointer a, gconstpointer b,
                         gpointer user_data G_GNUC_UNUSED);
@@ -77,15 +77,15 @@ static int CGNSReader_Read(void *_reader) {
     CGNSReader *const reader = _reader;
 
     if (OpenFile(reader))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     if (ReadBase(reader))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     if (ReadZone(reader))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     if (ReadCoord(reader))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     if (ReadSect(reader))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     printf("read done\n");
 
     return 0;
@@ -97,13 +97,13 @@ static int OpenFile(CGNSReader *reader) {
     /* Check validity. */
     if (cg_is_cgns(reader->interface.file_name, &file_type)) {
         printf("error: invalid file\n");
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     }
 
     /* Open CGNS file for read-only. */
     if (cg_open(reader->interface.file_name, CG_MODE_READ, &reader->fn)) {
         printf("error: cannot open file\n");
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     }
     printf("read file: %s\n", reader->interface.file_name);
 
@@ -115,18 +115,18 @@ static int ReadBase(CGNSReader *reader) {
 
     /* Read the number of bases. */
     if (cg_nbases(reader->fn, &nbases))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
 
     /* Check if only one base exists. */
     if (nbases > 1) {
         printf("error: expected only one base\n");
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     }
 
     /* Read the base. */
     if (cg_base_read(reader->fn, 1,
                      reader->base_name, &reader->cell_dim, &reader->phys_dim))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     printf("base \"%s\": cell dimension %d, physical dimension %d\n",
            reader->base_name, reader->cell_dim, reader->phys_dim);
 
@@ -140,27 +140,27 @@ static int ReadZone(CGNSReader *reader) {
 
     /* Read the number of zones. */
     if (cg_nzones(reader->fn, 1, &nzones))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
 
     /* Check if only one zone exists. */
     if (nzones > 1) {
         printf("error: expected only one zone\n");
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     }
 
     /* Read the zone type. */
     if (cg_zone_type(reader->fn, 1, 1, &zone_type))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
 
     /* Check if the zone type is `Unstructured`. */
     if (zone_type != CGNS_ENUMV(Unstructured)) {
         printf("error: expected unstructured mesh\n");
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     }
 
     /* Read the zone name and sizes. */
     if (cg_zone_read(reader->fn, 1, 1, reader->zone_name, zone_size))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     reader->nverts = zone_size[0];
     reader->nelems_internal = zone_size[1];
     printf("zone \"%s\": #vertices %ld, #internal elements %ld\n",
@@ -186,18 +186,18 @@ static int ReadCoord(CGNSReader *reader) {
     if (cg_coord_read(reader->fn, 1, 1, "CoordinateX",
                       CGNS_ENUMV(RealDouble), &rmin, &rmax, reader->x)) {
         printf("error: reading x coordinates failed\n");
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     }
     if (cg_coord_read(reader->fn, 1, 1, "CoordinateY",
                       CGNS_ENUMV(RealDouble), &rmin, &rmax, reader->y)) {
         printf("error: reading y coordinates failed\n");
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     }
     if (reader->cell_dim > 2)
         if (cg_coord_read(reader->fn, 1, 1, "CoordinateZ",
                         CGNS_ENUMV(RealDouble), &rmin, &rmax, reader->z)) {
             printf("error: reading z coordinates failed\n");
-            return READER_ERROR;
+            return READER_INTERFACE_ERROR;
         }
 
     return 0;
@@ -210,7 +210,7 @@ static int ReadSect(CGNSReader *reader) {
 
     /* Read the nubmer of sections. */
     if (cg_nsections(reader->fn, 1, 1, &reader->nsects))
-        return READER_ERROR;
+        return READER_INTERFACE_ERROR;
     printf("total %d sections\n", reader->nsects);
 
     /* Allocate the arrays. */
@@ -230,12 +230,12 @@ static int ReadSect(CGNSReader *reader) {
                             reader->sect_name[s], &reader->elem_type[s],
                             &reader->elem_idx_start[s], &reader->elem_idx_end[s],
                             &nbndry, &parent_flag))
-            return READER_ERROR;
+            return READER_INTERFACE_ERROR;
         reader->nelems[s] = reader->elem_idx_end[s] - reader->elem_idx_start[s] + 1;
 
         /* Read the connectivity data size. */
         if (cg_ElementDataSize(reader->fn, 1, 1, s+1, &reader->elem_conn_size[s]))
-            return READER_ERROR;
+            return READER_INTERFACE_ERROR;
 
         /* Read the connectivity. */
         reader->elem_conn[s] = malloc(sizeof(*reader->elem_conn[s])
@@ -248,18 +248,18 @@ static int ReadSect(CGNSReader *reader) {
             if (cg_poly_elements_read(reader->fn, 1, 1, s+1,
                                       reader->elem_conn[s], reader->elem_offset[s],
                                       &parent_data))
-                return READER_ERROR;
+                return READER_INTERFACE_ERROR;
             first_elem_type = reader->elem_conn[s][0];
             break;
         case CGNS_ENUMV(NGON_n):
         case CGNS_ENUMV(NFACE_n):
             printf("error: arbitrary polyhedral elements are not supported\n");
-            return READER_ERROR;
+            return READER_INTERFACE_ERROR;
             break;
         default:
             if (cg_elements_read(reader->fn, 1, 1, s+1,
                                  reader->elem_conn[s], NULL))
-                return READER_ERROR;
+                return READER_INTERFACE_ERROR;
             first_elem_type = reader->elem_type[s];
         }
 
@@ -277,7 +277,7 @@ static int ReadSect(CGNSReader *reader) {
                 if (DimElem(first_elem_type)
                     != DimElem(reader->elem_conn[s][reader->elem_offset[s][i]])) {
                     printf("error: elements dimensions are different\n");
-                    return READER_ERROR;
+                    return READER_INTERFACE_ERROR;
                 }
 
         printf("section \"%s\": type %s, #elements %ld, %s\n",
@@ -323,7 +323,7 @@ static int DimElem(ElementType_t elem_type) {
     }
 }
 
-static void CGNSReader_WriteToMesh(void *_reader, Mesh *mesh) {
+static int CGNSReader_WriteToMesh(void *_reader, Mesh *mesh) {
     CGNSReader *const reader = _reader;
     GTree *face_tree;
 
@@ -356,15 +356,19 @@ static void CGNSReader_WriteToMesh(void *_reader, Mesh *mesh) {
     /* Read internal elements. */
     for (int s = 0; s < reader->nsects; s++)
         if (reader->is_internal[s])
-            ReadInternal(reader, mesh, s);
+            if (ReadInternal(reader, mesh, s))
+                return READER_INTERFACE_ERROR;
 
     /* Calculate the adjacency info between elements. */
     face_tree = GetAdjacency(mesh);
+    if (!face_tree)
+        return READER_INTERFACE_ERROR;
 
     /* Read boundary elements. */
     for (int s = 0; s < reader->nsects; s++)
         if (!reader->is_internal[s])
-            ReadBoundary(reader, mesh, face_tree, s);
+            if (ReadBoundary(reader, mesh, face_tree, s))
+                return READER_INTERFACE_ERROR;
 
     g_tree_destroy(face_tree);
 
@@ -375,9 +379,11 @@ static void CGNSReader_WriteToMesh(void *_reader, Mesh *mesh) {
                 mesh->elems[i].face_section[j] = FACE_SECT_UNSPEC_BNDRY;
         }
     }
+
+    return 0;
 }
 
-static void ReadInternal(CGNSReader *reader, Mesh *mesh, int s) {
+static int ReadInternal(CGNSReader *reader, Mesh *mesh, int s) {
     cgsize_t *start;
     int npe;
 
@@ -430,6 +436,8 @@ static void ReadInternal(CGNSReader *reader, Mesh *mesh, int s) {
             mesh->nelems++;
         }
     }
+
+    return 0;
 }
 
 static GTree *GetAdjacency(Mesh *mesh) {
@@ -444,55 +452,66 @@ static GTree *GetAdjacency(Mesh *mesh) {
 
         switch (mesh->elems[i].type) {
         case ELEMTYPE_TRI:
-            StoreToFaceTree(face_tree, 2, v[0], v[1], i, 0);
-            StoreToFaceTree(face_tree, 2, v[1], v[2], i, 1);
-            StoreToFaceTree(face_tree, 2, v[2], v[0], i, 2);
+            if (StoreToFaceTree(face_tree, 2, v[0], v[1], i, 0) ||
+                StoreToFaceTree(face_tree, 2, v[1], v[2], i, 1) ||
+                StoreToFaceTree(face_tree, 2, v[2], v[0], i, 2))
+                goto error;
             break;
         case ELEMTYPE_QUAD:
-            StoreToFaceTree(face_tree, 2, v[0], v[1], i, 0);
-            StoreToFaceTree(face_tree, 2, v[1], v[2], i, 1);
-            StoreToFaceTree(face_tree, 2, v[2], v[3], i, 2);
-            StoreToFaceTree(face_tree, 2, v[3], v[0], i, 3);
+            if (StoreToFaceTree(face_tree, 2, v[0], v[1], i, 0) ||
+                StoreToFaceTree(face_tree, 2, v[1], v[2], i, 1) ||
+                StoreToFaceTree(face_tree, 2, v[2], v[3], i, 2) ||
+                StoreToFaceTree(face_tree, 2, v[3], v[0], i, 3))
+                goto error;
             break;
         case ELEMTYPE_TETRA:
-            StoreToFaceTree(face_tree, 3, v[0], v[2], v[1], i, 0);
-            StoreToFaceTree(face_tree, 3, v[0], v[1], v[3], i, 1);
-            StoreToFaceTree(face_tree, 3, v[1], v[2], v[3], i, 2);
-            StoreToFaceTree(face_tree, 3, v[2], v[0], v[3], i, 3);
+            if (StoreToFaceTree(face_tree, 3, v[0], v[2], v[1], i, 0) ||
+                StoreToFaceTree(face_tree, 3, v[0], v[1], v[3], i, 1) ||
+                StoreToFaceTree(face_tree, 3, v[1], v[2], v[3], i, 2) ||
+                StoreToFaceTree(face_tree, 3, v[2], v[0], v[3], i, 3))
+                goto error;
             break;
         case ELEMTYPE_PYRA:
-            StoreToFaceTree(face_tree, 4, v[0], v[3], v[2], v[1], i, 0);
-            StoreToFaceTree(face_tree, 3, v[0], v[1], v[4],       i, 1);
-            StoreToFaceTree(face_tree, 3, v[1], v[2], v[4],       i, 2);
-            StoreToFaceTree(face_tree, 3, v[2], v[3], v[4],       i, 3);
-            StoreToFaceTree(face_tree, 3, v[3], v[0], v[4],       i, 4);
+            if (StoreToFaceTree(face_tree, 4, v[0], v[3], v[2], v[1], i, 0) ||
+                StoreToFaceTree(face_tree, 3, v[0], v[1], v[4],       i, 1) ||
+                StoreToFaceTree(face_tree, 3, v[1], v[2], v[4],       i, 2) ||
+                StoreToFaceTree(face_tree, 3, v[2], v[3], v[4],       i, 3) ||
+                StoreToFaceTree(face_tree, 3, v[3], v[0], v[4],       i, 4))
+                goto error;
             break;
         case ELEMTYPE_PRISM:
-            StoreToFaceTree(face_tree, 4, v[0], v[1], v[4], v[3], i, 0);
-            StoreToFaceTree(face_tree, 4, v[1], v[2], v[5], v[4], i, 1);
-            StoreToFaceTree(face_tree, 4, v[2], v[0], v[3], v[5], i, 2);
-            StoreToFaceTree(face_tree, 3, v[0], v[2], v[1],       i, 3);
-            StoreToFaceTree(face_tree, 3, v[3], v[4], v[5],       i, 4);
+            if (StoreToFaceTree(face_tree, 4, v[0], v[1], v[4], v[3], i, 0) ||
+                StoreToFaceTree(face_tree, 4, v[1], v[2], v[5], v[4], i, 1) ||
+                StoreToFaceTree(face_tree, 4, v[2], v[0], v[3], v[5], i, 2) ||
+                StoreToFaceTree(face_tree, 3, v[0], v[2], v[1],       i, 3) ||
+                StoreToFaceTree(face_tree, 3, v[3], v[4], v[5],       i, 4))
+                goto error;
             break;
         case ELEMTYPE_HEXA:
-            StoreToFaceTree(face_tree, 4, v[0], v[3], v[2], v[1], i, 0);
-            StoreToFaceTree(face_tree, 4, v[0], v[1], v[5], v[4], i, 1);
-            StoreToFaceTree(face_tree, 4, v[1], v[2], v[6], v[5], i, 2);
-            StoreToFaceTree(face_tree, 4, v[2], v[3], v[7], v[6], i, 3);
-            StoreToFaceTree(face_tree, 4, v[0], v[4], v[7], v[3], i, 4);
-            StoreToFaceTree(face_tree, 4, v[4], v[5], v[6], v[7], i, 5);
+            if (StoreToFaceTree(face_tree, 4, v[0], v[3], v[2], v[1], i, 0) ||
+                StoreToFaceTree(face_tree, 4, v[0], v[1], v[5], v[4], i, 1) ||
+                StoreToFaceTree(face_tree, 4, v[1], v[2], v[6], v[5], i, 2) ||
+                StoreToFaceTree(face_tree, 4, v[2], v[3], v[7], v[6], i, 3) ||
+                StoreToFaceTree(face_tree, 4, v[0], v[4], v[7], v[3], i, 4) ||
+                StoreToFaceTree(face_tree, 4, v[4], v[5], v[6], v[7], i, 5))
+                goto error;
             break;
         default:
-            cg_error_exit();
+            printf("error: unknown element type\n");
+            goto error;
         }
     }
 
     g_tree_foreach(face_tree, FindAdjElem, mesh);
 
     return face_tree;
+
+error:
+    g_tree_destroy(face_tree);
+    return NULL;
 }
 
-static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
+static int ReadBoundary(CGNSReader *reader, Mesh *mesh,
                          GTree *face_tree, int s) {
     cgsize_t *start, tmp;
     MeshElemType type;
@@ -529,7 +548,13 @@ static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
 
             /* Find the internal elements containing this boundary element. */
             value = g_tree_lookup(face_tree, &key);
-            if (!value) cg_error_exit();
+            if (!value) {
+                printf("error: boundary element #%ld in the section %d"
+                       " is not a face of an internal element\n",
+                       (long)(reader->elem_idx_start[s] + i),
+                       s);
+                return READER_INTERFACE_ERROR;
+            }
 
             /* Set the face section of the element. */
             mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]] = s;
@@ -547,7 +572,7 @@ static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
            2-D or 2-D if the mesh is 3-D. Otherwise, ignore it. */
         if ((mesh->dim == 2 && ElemTypeDim[type] != 1)
             || (mesh->dim == 3 && ElemTypeDim[type] != 2))
-            return;
+            return 0;
 
         /* Get the number of vertices in each element. */
         cg_npe(reader->elem_type[s], &key.n);
@@ -571,7 +596,13 @@ static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
 
             /* Find the internal elements containing this boundary element. */
             value = g_tree_lookup(face_tree, &key);
-            if (!value) cg_error_exit();
+            if (!value) {
+                printf("error: boundary element #%ld in the section %d"
+                       " is not a face of an internal element\n",
+                       (long)(reader->elem_idx_start[s] + i),
+                       s);
+                return READER_INTERFACE_ERROR;
+            }
 
             /* Set the face section of the element. */
             mesh->elems[value->elem_idx[0]].face_section[value->face_idx[0]] = s;
@@ -579,6 +610,8 @@ static void ReadBoundary(CGNSReader *reader, Mesh *mesh,
                 mesh->elems[value->elem_idx[1]].face_section[value->face_idx[1]] = s;
         }
     }
+
+    return 0;
 }
 
 static MeshElemType CGNSToElemType(ElementType_t type) {
@@ -647,7 +680,7 @@ static MeshElemType CGNSToElemType(ElementType_t type) {
     }
 }
 
-static void StoreToFaceTree(GTree *tree, int n, ...) {
+static int StoreToFaceTree(GTree *tree, int n, ...) {
     va_list ap;
     FaceKey key_static, *key;
     FaceValue *value;
@@ -670,7 +703,10 @@ static void StoreToFaceTree(GTree *tree, int n, ...) {
     value = g_tree_lookup(tree, &key_static);
 
     if (value) {
-        if (value->elem_idx[1] != (size_t)(-1)) cg_error_exit();
+        if (value->elem_idx[1] != (size_t)(-1)) {
+            printf("error: more than 2 elements share one face\n");
+            return READER_INTERFACE_ERROR;
+        }
 
         value->elem_idx[1] = va_arg(ap, int);
         value->face_idx[1] = va_arg(ap, int);
@@ -688,6 +724,8 @@ static void StoreToFaceTree(GTree *tree, int n, ...) {
     }
 
     va_end(ap);
+
+    return 0;
 }
 
 static gint CompareFace(gconstpointer a, gconstpointer b,
