@@ -59,6 +59,9 @@ typedef struct _mesh {
 } Mesh;
 
 Mesh *Mesh_Create(ReaderInterface *reader, MPI_Comm comm);
+
+size_t Mesh_AdjacencySize(Mesh *mesh);
+
 void Mesh_Destroy(Mesh *mesh);
 
 #endif

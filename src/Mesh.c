@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "../include/MetisPartitioner.h"
+
 const int MeshElemTypeNVerts[7] = {
     [ELEMTYPE_SEG] = 2,
     [ELEMTYPE_TRI] = 3,
@@ -25,10 +27,9 @@ const int MeshElemTypeNFaces[7] = {
     [ELEMTYPE_HEXA] = 6,
 };
 
-static void Mesh_Distribute(Mesh *mesh);
-
 Mesh *Mesh_Create(ReaderInterface *reader, MPI_Comm comm) {
     Mesh *mesh;
+    MetisPartitioner *metis;
     int rank;
 
     mesh = malloc(sizeof(*mesh));
@@ -42,14 +43,29 @@ Mesh *Mesh_Create(ReaderInterface *reader, MPI_Comm comm) {
     MPI_Comm_rank(mesh->comm, &rank);
 
     /* Process 0 reads CGNS file. */
-    if (rank == 0) {
+    if (rank == 0)
         if (ReaderInterface_ReadFile(reader)
             || ReaderInterface_WriteToMesh(reader, mesh))
             MPI_Abort(mesh->comm, -1);
-    }
-    Mesh_Distribute(mesh);
+
+    metis = MetisPartitioner_Create(mesh, true);
+    if (MetisPartitioner_PartitionMesh(metis))
+        MPI_Abort(mesh->comm, -1);
+    MetisPartitioner_Destroy(metis);
 
     return mesh;
+}
+
+size_t Mesh_AdjacencySize(Mesh *mesh) {
+    size_t adjacency_size;
+
+    adjacency_size = 0;
+    for (size_t i = 0; i < mesh->nelems; i++)
+        for (int j = 0; j < MeshElemTypeNFaces[mesh->elems[i].type]; j++)
+            if (mesh->elems[i].idx_adj[j] != IDX_ADJ_NO_ADJ)
+                adjacency_size++;
+
+    return adjacency_size;
 }
 
 void Mesh_Destroy(Mesh *mesh) {
@@ -58,8 +74,4 @@ void Mesh_Destroy(Mesh *mesh) {
     free(mesh->sect_name);
 
     free(mesh);
-}
-
-static void Mesh_Distribute(Mesh *mesh) {
-    printf("Lets distribute!\n");
 }

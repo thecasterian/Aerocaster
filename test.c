@@ -4,7 +4,7 @@
 #include "include/Mesh.h"
 
 #include <mpi.h>
-#include <parmetis.h>
+#include <metis.h>
 
 int main(int argc, char *argv[]) {
     ReaderInterface *reader;
@@ -12,12 +12,12 @@ int main(int argc, char *argv[]) {
 
     MPI_Init(&argc, &argv);
 
-    reader = CGNSReader_Create();
+    reader = ReaderInterface_CreateCGNSReader("./example/cavity.cgns");
 
     mesh = Mesh_Create(reader, MPI_COMM_WORLD);
 
     Mesh_Destroy(mesh);
-    CGNSReader_Destroy(reader);
+    ReaderInterface_Destroy(reader);
 
     MPI_Finalize();
 

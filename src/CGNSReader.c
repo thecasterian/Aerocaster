@@ -52,7 +52,9 @@ static gboolean FindAdjElem(gpointer key G_GNUC_UNUSED, gpointer value,
                             gpointer data);
 
 ReaderInterface *ReaderInterface_CreateCGNSReader(const char *file_name) {
-    CGNSReader *reader = malloc(sizeof(*reader));
+    CGNSReader *reader;
+
+    reader = malloc(sizeof(*reader));
 
     /* Initialize the interface. */
     reader->interface.reader = reader;
